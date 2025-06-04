@@ -9,140 +9,129 @@
 #include <sys/socket.h>
 #include "libmysyslog.h"  // Подключение библиотеки логирования
 
-#define BUFFER_SIZE 1024
+#define MSG_SIZE 1024
 
-void print_help() {
-    printf("Usage: myRPC-client [OPTIONS]\n");
+void HELP() {
+    printf("Usage: rpcClientApp [OPTIONS]\n");
     printf("Options:\n");
-    printf("  -c, --command \"bash_command\"   Command to execute\n");
-    printf("  -h, --host \"ip_addr\"          Server IP address\n");
-    printf("  -p, --port PORT                Server port\n");
-    printf("  -s, --stream                   Use stream socket\n");
-    printf("  -d, --dgram                    Use datagram socket\n");
-    printf("      --help                     Display this help and exit\n");
+    printf("  -x, --exec \"bash_command\"   Command to execute\n");
+    printf("  -a, --address \"ip_addr\"      Server IP address\n");
+    printf("  -q, --queue PORT              Server port\n");
+    printf("  -t, --tcp                    Use TCP socket\n");
+    printf("  -u, --udp                    Use UDP socket\n");
+    printf("      --help                   Show this help message\n");
 }
 
 int main(int argc, char *argv[]) {
-    char *command = NULL;
-    char *server_ip = NULL;
-    int port = 0;
-    int use_stream = 1; // Базовый сокет
-    int opt;
+    char *exec_cmd = NULL;
+    char *server_addr = NULL;
+    int server_port = 0;
+    int tcp_mode = 1; // по умолчанию TCP
+    int option_char;
 
-    static struct option long_options[] = {
-        {"command", required_argument, 0, 'c'},
-        {"host", required_argument, 0, 'h'},
-        {"port", required_argument, 0, 'p'},
-        {"stream", no_argument, 0, 's'},
-        {"dgram", no_argument, 0, 'd'},
+    static struct option long_opts[] = {
+        {"exec", required_argument, 0, 'x'},
+        {"address", required_argument, 0, 'a'},
+        {"queue", required_argument, 0, 'q'},
+        {"tcp", no_argument, 0, 't'},
+        {"udp", no_argument, 0, 'u'},
         {"help", no_argument, 0,  0 },
         {0, 0, 0, 0}
     };
 
-    int option_index = 0;
-    while ((opt = getopt_long(argc, argv, "c:h:p:sd", long_options, &option_index)) != -1) {
-        switch (opt) {
-            case 'c':
-                command = optarg;
+    int opt_idx = 0;
+    while ((option_char = getopt_long(argc, argv, "x:a:q:tu", long_opts, &opt_idx)) != -1) {
+        switch (option_char) {
+            case 'x':
+                exec_cmd = optarg;
                 break;
-            case 'h':
-                server_ip = optarg;
+            case 'a':
+                server_addr = optarg;
                 break;
-            case 'p':
-                port = atoi(optarg);
+            case 'q':
+                server_port = atoi(optarg);
                 break;
-            case 's':
-                use_stream = 1;
+            case 't':
+                tcp_mode = 1;
                 break;
-            case 'd':
-                use_stream = 0;
+            case 'u':
+                tcp_mode = 0;
                 break;
             case 0:
-                print_help();
+                HELP();
                 return 0;
             default:
-                print_help();
+                HELP();
                 return 1;
         }
     }
 
-    if (!command || !server_ip || !port) {
-        fprintf(stderr, "Error: Missing required arguments\n");
-        print_help();
+    if (!exec_cmd || !server_addr || server_port == 0) {
+        fprintf(stderr, "Error: Required arguments missing\n");
+        HELP();
         return 1;
     }
 
-    // Получение имени пользователя
-    struct passwd *pw = getpwuid(getuid());
-    char *username = pw->pw_name;
+    struct passwd *user_info = getpwuid(getuid());
+    char *user_name = user_info->pw_name;
 
-    // Подготовка запроса
-    char request[BUFFER_SIZE];
-    snprintf(request, BUFFER_SIZE, "%s: %s", username, command);
+    char message[MSG_SIZE];
+    snprintf(message, MSG_SIZE, "%s: %s", user_name, exec_cmd);
 
-    // Логирование действия
-    mysyslog("Connecting to the server...", INFO, 0, 0, "/var/log/myrpc.log");
+    mysyslog("Starting connection to server...", INFO, 0, 0, "/var/log/myrpc.log");
 
-    // Создание сокета
-    int sockfd;
-    if (use_stream) {
-        sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    int socket_fd;
+    if (tcp_mode) {
+        socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     } else {
-        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        socket_fd = socket(AF_INET, SOCK_DGRAM, 0);
     }
 
-    if (sockfd < 0) {
-        mysyslog("Socket creation failed", ERROR, 0, 0, "/var/log/myrpc.log");
-        perror("Socket creation failed");
+    if (socket_fd < 0) {
+        mysyslog("Failed to create socket", ERROR, 0, 0, "/var/log/myrpc.log");
+        perror("Socket creation error");
         return 1;
     }
 
-    // Настройка адреса сервера
-    struct sockaddr_in servaddr;
-    memset(&servaddr, 0, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_port = htons(port);
-    inet_pton(AF_INET, server_ip, &servaddr.sin_addr);
+    struct sockaddr_in server_info;
+    memset(&server_info, 0, sizeof(server_info));
+    server_info.sin_family = AF_INET;
+    server_info.sin_port = htons(server_port);
+    inet_pton(AF_INET, server_addr, &server_info.sin_addr);
 
-    if (use_stream) {
-        // Подключение к серверу
-        if (connect(sockfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
-            mysyslog("Connection failed", ERROR, 0, 0, "/var/log/myrpc.log");
-            perror("Connection failed");
-            close(sockfd);
+    if (tcp_mode) {
+        if (connect(socket_fd, (struct sockaddr*)&server_info, sizeof(server_info)) < 0) {
+            mysyslog("Connection to server failed", ERROR, 0, 0, "/var/log/myrpc.log");
+            perror("Connect error");
+            close(socket_fd);
             return 1;
         }
 
-        // Логирование успешного подключения
-        mysyslog("Successfully connected to server", INFO, 0, 0, "/var/log/myrpc.log");
+        mysyslog("Connected to server successfully", INFO, 0, 0, "/var/log/myrpc.log");
 
-        // Отправка запроса
-        send(sockfd, request, strlen(request), 0);
+        send(socket_fd, message, strlen(message), 0);
 
-        // Получение ответа
-        char response[BUFFER_SIZE];
-        int n = recv(sockfd, response, BUFFER_SIZE, 0);
-        response[n] = '\0';
-        printf("Server response: %s\n", response);
-
-        // Логирование результата
-        mysyslog("Received server response", INFO, 0, 0, "/var/log/myrpc.log");
+        char recv_buf[MSG_SIZE];
+        int bytes_received = recv(socket_fd, recv_buf, MSG_SIZE, 0);
+        if (bytes_received >= 0) {
+            recv_buf[bytes_received] = '\0';
+            printf("Response from server: %s\n", recv_buf);
+            mysyslog("Server response received", INFO, 0, 0, "/var/log/myrpc.log");
+        }
 
     } else {
-        // Отправка запроса
-        sendto(sockfd, request, strlen(request), 0, (struct sockaddr*)&servaddr, sizeof(servaddr));
+        sendto(socket_fd, message, strlen(message), 0, (struct sockaddr*)&server_info, sizeof(server_info));
 
-        // Получение ответа
-        char response[BUFFER_SIZE];
-        socklen_t len = sizeof(servaddr);
-        int n = recvfrom(sockfd, response, BUFFER_SIZE, 0, (struct sockaddr*)&servaddr, &len);
-        response[n] = '\0';
-        printf("Server response: %s\n", response);
-
-        // Логирование результата
-        mysyslog("Received server response", INFO, 0, 0, "/var/log/myrpc.log");
+        char recv_buf[MSG_SIZE];
+        socklen_t addr_len = sizeof(server_info);
+        int bytes_received = recvfrom(socket_fd, recv_buf, MSG_SIZE, 0, (struct sockaddr*)&server_info, &addr_len);
+        if (bytes_received >= 0) {
+            recv_buf[bytes_received] = '\0';
+            printf("Response from server: %s\n", recv_buf);
+            mysyslog("Server response received", INFO, 0, 0, "/var/log/myrpc.log");
+        }
     }
 
-    close(sockfd);
+    close(socket_fd);
     return 0;
 }
