@@ -26,10 +26,13 @@ Settings read_settings(const char *filepath) {
         char *key_part = strtok(buffer, "=");
         char *value_part = strtok(NULL, "");
 
-        if (strcmp(key_part, "port") == 0) {
-            settings.port_number = atoi(value_part);
-        } else if (strcmp(key_part, "socket_type") == 0) {
-            strcpy(settings.socket_kind, value_part);
+        if (key_part && value_part) {
+            if (strcmp(key_part, "port") == 0) {
+                settings.port_number = atoi(value_part);
+            } else if (strcmp(key_part, "socket_type") == 0) {
+                strncpy(settings.socket_kind, value_part, sizeof(settings.socket_kind) - 1);
+                settings.socket_kind[sizeof(settings.socket_kind) - 1] = '\0'; // гарантируем нуль-терминацию
+            }
         }
     }
 
