@@ -1,38 +1,38 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "config_parser.h"
+#include "settings_reader.h"
 
-Config parse_config(const char *filename) {
-    Config config;
-    config.port = 0;
-    strcpy(config.socket_type, "stream");
+Settings read_settings(const char *filepath) {
+    Settings settings;
+    settings.port_number = 0;
+    strcpy(settings.socket_kind, "stream");
 
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        perror("Failed to open config file");
-        return config;
+    FILE *config_file = fopen(filepath, "r");
+    if (!config_file) {
+        perror("Unable to open settings file");
+        return settings;
     }
 
-    char line[256];
-    while (fgets(line, sizeof(line), file)) {
+    char buffer[256];
+    while (fgets(buffer, sizeof(buffer), config_file)) {
         // Удаление символа новой строки
-        line[strcspn(line, "\n")] = '\0';
+        buffer[strcspn(buffer, "\n")] = '\0';
 
         // Пропуск комментариев и пустых строк
-        if (line[0] == '#' || strlen(line) == 0)
+        if (buffer[0] == '#' || strlen(buffer) == 0)
             continue;
 
-        char *key = strtok(line, "=");
-        char *value = strtok(NULL, "");
+        char *key_part = strtok(buffer, "=");
+        char *value_part = strtok(NULL, "");
 
-        if (strcmp(key, "port") == 0) {
-            config.port = atoi(value);
-        } else if (strcmp(key, "socket_type") == 0) {
-            strcpy(config.socket_type, value);
+        if (strcmp(key_part, "port") == 0) {
+            settings.port_number = atoi(value_part);
+        } else if (strcmp(key_part, "socket_type") == 0) {
+            strcpy(settings.socket_kind, value_part);
         }
     }
 
-    fclose(file);
-    return config;
+    fclose(config_file);
+    return settings;
 }
