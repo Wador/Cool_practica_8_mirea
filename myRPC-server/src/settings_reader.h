@@ -2,10 +2,10 @@
 #define SETTINGS_READER_H
 
 typedef struct {
-    int port_number;
-    char socket_kind[256];
-} Settings;
+    int port;
+    char socket_type[16];
+} Config;
 
-Settings read_settings(const char *filepath);
+Config parse_config(const char *filename);
 
-#endif // SETTINGS_READER_H
+#endif 
