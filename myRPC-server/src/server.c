@@ -8,269 +8,222 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include "config_parser.h"
-#include "libmysyslog.h"  // Библиотека для системного логирования
+#include "libmysyslog.h"  // Логирование системы
 
-#define BUFFER_SIZE 1024  // Размер буфера для чтения/записи данных
+#define MAX_BUF_LEN 1024  // Максимальный размер буфера для данных
 
-// Глобальная переменная для контроля работы сервера
-volatile sig_atomic_t stop;
+volatile sig_atomic_t terminate_flag;
 
-/**
- * Обработчик сигналов для корректного завершения работы сервера
- * @param sig Номер полученного сигнала
- */
-void handle_signal(int sig) {
-    stop = 1;
+//Обработчик сигналов для корректного завершения работы приложения
+void signal_handler(int signal_code) {
+    terminate_flag = 1;
 }
 
-/**
- * Проверка наличия пользователя в списке разрешенных
- * @param username Имя пользователя для проверки
- * @return 1 если пользователь разрешен, 0 в противном случае
- */
-int user_allowed(const char *username) {
-    // Открытие файла с конфигурацией пользователей
-    FILE *file = fopen("/etc/myRPC/users.conf", "r");
-    if (!file) {
-        mysyslog("Failed to open users.conf", ERROR, 0, 0, "/var/log/myrpc.log");
-        perror("Failed to open users.conf");
+// Проверяка наличия пользователя в списке разрешённых
+int is_user_permitted(const char *user) {
+    FILE *conf_file = fopen("/etc/myRPC/users.conf", "r");
+    if (!conf_file) {
+        mysyslog("Cannot open users.conf", ERROR, 0, 0, "/var/log/myrpc.log");
+        perror("Cannot open users.conf");
         return 0;
     }
 
-    char line[256];
-    int allowed = 0;
-    
-    // Построчное чтение файла конфигурации
-    while (fgets(line, sizeof(line), file)) {
-        // Удаление символа новой строки
-        line[strcspn(line, "\n")] = '\0';
+    char line_buf[256];
+    int permitted = 0;
 
-        // Пропуск комментариев и пустых строк
-        if (line[0] == '#' || strlen(line) == 0)
+    while (fgets(line_buf, sizeof(line_buf), conf_file)) {
+        line_buf[strcspn(line_buf, "\n")] = '\0';
+
+        if (line_buf[0] == '#' || strlen(line_buf) == 0)
             continue;
 
-        // Проверка соответствия имени пользователя
-        if (strcmp(line, username) == 0) {
-            allowed = 1;
+        if (strcmp(line_buf, user) == 0) {
+            permitted = 1;
             break;
         }
     }
 
-    fclose(file);
-    return allowed;
+    fclose(conf_file);
+    return permitted;
 }
 
-/**
- * Выполнение команды с перенаправлением вывода в файлы
- * @param command Команда для выполнения
- * @param stdout_file Файл для стандартного вывода
- * @param stderr_file Файл для вывода ошибок
- */
-void execute_command(const char *command, char *stdout_file, char *stderr_file) {
-    // Формирование команды с перенаправлением вывода
-    char cmd[BUFFER_SIZE];
-    snprintf(cmd, BUFFER_SIZE, "%s >%s 2>%s", command, stdout_file, stderr_file);
-    system(cmd);
+// Перенаправление stdout и stderr в файлы
+void run_system_command(const char *cmd, char *out_file, char *err_file) {
+    char full_cmd[MAX_BUF_LEN];
+    snprintf(full_cmd, MAX_BUF_LEN, "%s >%s 2>%s", cmd, out_file, err_file);
+    system(full_cmd);
 }
 
 int main() {
-    // Установка обработчиков сигналов для корректного завершения
-    signal(SIGINT, handle_signal);
-    signal(SIGTERM, handle_signal);
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
 
-    // Чтение конфигурационного файла сервера
-    Config config = parse_config("/etc/myRPC/myRPC.conf");
+    Config srv_config = parse_config("/etc/myRPC/myRPC.conf");
+    int srv_port = srv_config.port;
+    int is_stream_socket = strcmp(srv_config.socket_type, "stream") == 0;
 
-    int port = config.port;
-    int use_stream = strcmp(config.socket_type, "stream") == 0;
+    mysyslog("Server initialization started", INFO, 0, 0, "/var/log/myrpc.log");
 
-    // Логирование запуска сервера
-    mysyslog("Server starting...", INFO, 0, 0, "/var/log/myrpc.log");
-
-    // Создание сокета в зависимости от типа (STREAM/DGRAM)
-    int sockfd;
-    if (use_stream) {
-        sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    int server_sock;
+    if (is_stream_socket) {
+        server_sock = socket(AF_INET, SOCK_STREAM, 0);
     } else {
-        sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+        server_sock = socket(AF_INET, SOCK_DGRAM, 0);
     }
 
-    if (sockfd < 0) {
-        mysyslog("Socket creation failed", ERROR, 0, 0, "/var/log/myrpc.log");
-        perror("Socket creation failed");
+    if (server_sock < 0) {
+        mysyslog("Failed to create socket", ERROR, 0, 0, "/var/log/myrpc.log");
+        perror("Failed to create socket");
         return 1;
     }
 
-    // Установка параметра для повторного использования порта
-    int opt = 1;
-    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-        mysyslog("setsockopt failed", ERROR, 0, 0, "/var/log/myrpc.log");
-        perror("setsockopt failed");
-        close(sockfd);
+    int reuse_flag = 1;
+    if (setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR, &reuse_flag, sizeof(reuse_flag)) < 0) {
+        mysyslog("setsockopt error", ERROR, 0, 0, "/var/log/myrpc.log");
+        perror("setsockopt error");
+        close(server_sock);
         return 1;
     }
 
-    // Настройка адреса сервера
-    struct sockaddr_in servaddr, cliaddr;
-    socklen_t len;
-    memset(&servaddr, 0, sizeof(servaddr));
-    servaddr.sin_family = AF_INET;
-    servaddr.sin_addr.s_addr = INADDR_ANY;
-    servaddr.sin_port = htons(port);
+    struct sockaddr_in address_server, address_client;
+    socklen_t addr_len;
+    memset(&address_server, 0, sizeof(address_server));
+    address_server.sin_family = AF_INET;
+    address_server.sin_addr.s_addr = INADDR_ANY;
+    address_server.sin_port = htons(srv_port);
 
-    // Привязка сокета к адресу
-    if (bind(sockfd, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
-        mysyslog("Bind failed", ERROR, 0, 0, "/var/log/myrpc.log");
-        perror("Bind failed");
-        close(sockfd);
+    if (bind(server_sock, (struct sockaddr*)&address_server, sizeof(address_server)) < 0) {
+        mysyslog("Bind error", ERROR, 0, 0, "/var/log/myrpc.log");
+        perror("Bind error");
+        close(server_sock);
         return 1;
     }
 
-    // Для STREAM сокета - переход в режим ожидания соединений
-    if (use_stream) {
-        listen(sockfd, 5);
-        mysyslog("Server listening (stream)", INFO, 0, 0, "/var/log/myrpc.log");
+    if (is_stream_socket) {
+        listen(server_sock, 5);
+        mysyslog("Listening on stream socket", INFO, 0, 0, "/var/log/myrpc.log");
     } else {
-        mysyslog("Server listening (datagram)", INFO, 0, 0, "/var/log/myrpc.log");
+        mysyslog("Listening on datagram socket", INFO, 0, 0, "/var/log/myrpc.log");
     }
 
-    // Основной цикл обработки запросов
-    while (!stop) {
-        char buffer[BUFFER_SIZE];
-        int n;
+    while (!terminate_flag) {
+        char recv_buffer[MAX_BUF_LEN];
+        int bytes_count;
 
-        if (use_stream) {
-            // Обработка STREAM соединений
-            len = sizeof(cliaddr);
-            int connfd = accept(sockfd, (struct sockaddr*)&cliaddr, &len);
-            if (connfd < 0) {
-                mysyslog("Accept failed", ERROR, 0, 0, "/var/log/myrpc.log");
-                perror("Accept failed");
+        if (is_stream_socket) {
+            addr_len = sizeof(address_client);
+            int client_fd = accept(server_sock, (struct sockaddr*)&address_client, &addr_len);
+            if (client_fd < 0) {
+                mysyslog("Accept error", ERROR, 0, 0, "/var/log/myrpc.log");
+                perror("Accept error");
                 continue;
             }
 
-            // Чтение данных от клиента
-            n = recv(connfd, buffer, BUFFER_SIZE, 0);
-            if (n <= 0) {
-                close(connfd);
+            bytes_count = recv(client_fd, recv_buffer, MAX_BUF_LEN, 0);
+            if (bytes_count <= 0) {
+                close(client_fd);
                 continue;
             }
-            buffer[n] = '\0';
+            recv_buffer[bytes_count] = '\0';
 
-            // Логирование полученного запроса
-            mysyslog("Received request", INFO, 0, 0, "/var/log/myrpc.log");
+            mysyslog("Request received", INFO, 0, 0, "/var/log/myrpc.log");
 
-            // Разбор полученных данных (формат: username:command)
-            char *username = strtok(buffer, ":");
-            char *command = strtok(NULL, "");
-            if (command) {
-                while (*command == ' ')
-                    command++;
+            char *user_name = strtok(recv_buffer, ":");
+            char *cmd_text = strtok(NULL, "");
+            if (cmd_text) {
+                while (*cmd_text == ' ')
+                    cmd_text++;
             }
 
-            char response[BUFFER_SIZE];
+            char reply[MAX_BUF_LEN];
 
-            // Проверка прав пользователя
-            if (user_allowed(username)) {
-                mysyslog("User allowed", INFO, 0, 0, "/var/log/myrpc.log");
+            if (is_user_permitted(user_name)) {
+                mysyslog("User permitted", INFO, 0, 0, "/var/log/myrpc.log");
 
-                // Создание временных файлов для вывода команды
-                char stdout_file[] = "/tmp/myRPC_XXXXXX.stdout";
-                char stderr_file[] = "/tmp/myRPC_XXXXXX.stderr";
-                mkstemp(stdout_file);
-                mkstemp(stderr_file);
+                char out_tmp[] = "/tmp/myRPC_XXXXXX.out";
+                char err_tmp[] = "/tmp/myRPC_XXXXXX.err";
+                mkstemp(out_tmp);
+                mkstemp(err_tmp);
 
-                // Выполнение команды
-                execute_command(command, stdout_file, stderr_file);
+                run_system_command(cmd_text, out_tmp, err_tmp);
 
-                // Чтение результатов выполнения
-                FILE *f = fopen(stdout_file, "r");
-                if (f) {
-                    size_t read_bytes = fread(response, 1, BUFFER_SIZE, f);
-                    response[read_bytes] = '\0';
-                    fclose(f);
+                FILE *out_f = fopen(out_tmp, "r");
+                if (out_f) {
+                    size_t read_bytes = fread(reply, 1, MAX_BUF_LEN, out_f);
+                    reply[read_bytes] = '\0';
+                    fclose(out_f);
                     mysyslog("Command executed successfully", INFO, 0, 0, "/var/log/myrpc.log");
                 } else {
-                    strcpy(response, "Error reading stdout file");
-                    mysyslog("Error reading stdout file", ERROR, 0, 0, "/var/log/myrpc.log");
+                    strcpy(reply, "Failed to read stdout");
+                    mysyslog("Failed to read stdout", ERROR, 0, 0, "/var/log/myrpc.log");
                 }
 
-                // Удаление временных файлов
-                remove(stdout_file);
-                remove(stderr_file);
+                remove(out_tmp);
+                remove(err_tmp);
 
             } else {
-                snprintf(response, BUFFER_SIZE, "1: User '%s' is not allowed", username);
-                mysyslog("User not allowed", WARN, 0, 0, "/var/log/myrpc.log");
+                snprintf(reply, MAX_BUF_LEN, "1: User '%s' is not permitted", user_name);
+                mysyslog("User not permitted", WARN, 0, 0, "/var/log/myrpc.log");
             }
 
-            // Отправка ответа клиенту
-            send(connfd, response, strlen(response), 0);
-            close(connfd);
+            send(client_fd, reply, strlen(reply), 0);
+            close(client_fd);
 
         } else {
-            // Обработка DGRAM сообщений
-            len = sizeof(cliaddr);
-            n = recvfrom(sockfd, buffer, BUFFER_SIZE, 0, (struct sockaddr*)&cliaddr, &len);
-            if (n <= 0) {
+            addr_len = sizeof(address_client);
+            bytes_count = recvfrom(server_sock, recv_buffer, MAX_BUF_LEN, 0,
+                                   (struct sockaddr*)&address_client, &addr_len);
+            if (bytes_count <= 0) {
                 continue;
             }
-            buffer[n] = '\0';
+            recv_buffer[bytes_count] = '\0';
 
-            // Логирование полученного запроса
-            mysyslog("Received request", INFO, 0, 0, "/var/log/myrpc.log");
+            mysyslog("Request received", INFO, 0, 0, "/var/log/myrpc.log");
 
-            // Разбор полученных данных (формат: username:command)
-            char *username = strtok(buffer, ":");
-            char *command = strtok(NULL, "");
-            if (command) {
-                while (*command == ' ')
-                    command++;
+            char *user_name = strtok(recv_buffer, ":");
+            char *cmd_text = strtok(NULL, "");
+            if (cmd_text) {
+                while (*cmd_text == ' ')
+                    cmd_text++;
             }
 
-            char response[BUFFER_SIZE];
+            char reply[MAX_BUF_LEN];
 
-            // Проверка прав пользователя
-            if (user_allowed(username)) {
-                mysyslog("User allowed", INFO, 0, 0, "/var/log/myrpc.log");
+            if (is_user_permitted(user_name)) {
+                mysyslog("User permitted", INFO, 0, 0, "/var/log/myrpc.log");
 
-                // Создание временных файлов для вывода команды
-                char stdout_file[] = "/tmp/myRPC_XXXXXX.stdout";
-                char stderr_file[] = "/tmp/myRPC_XXXXXX.stderr";
-                mkstemp(stdout_file);
-                mkstemp(stderr_file);
+                char out_tmp[] = "/tmp/myRPC_XXXXXX.out";
+                char err_tmp[] = "/tmp/myRPC_XXXXXX.err";
+                mkstemp(out_tmp);
+                mkstemp(err_tmp);
 
-                // Выполнение команды
-                execute_command(command, stdout_file, stderr_file);
+                run_system_command(cmd_text, out_tmp, err_tmp);
 
-                // Чтение результатов выполнения
-                FILE *f = fopen(stdout_file, "r");
-                if (f) {
-                    size_t read_bytes = fread(response, 1, BUFFER_SIZE, f);
-                    response[read_bytes] = '\0';
-                    fclose(f);
+                FILE *out_f = fopen(out_tmp, "r");
+                if (out_f) {
+                    size_t read_bytes = fread(reply, 1, MAX_BUF_LEN, out_f);
+                    reply[read_bytes] = '\0';
+                    fclose(out_f);
                     mysyslog("Command executed successfully", INFO, 0, 0, "/var/log/myrpc.log");
                 } else {
-                    strcpy(response, "Error reading stdout file");
-                    mysyslog("Error reading stdout file", ERROR, 0, 0, "/var/log/myrpc.log");
+                    strcpy(reply, "Failed to read stdout");
+                    mysyslog("Failed to read stdout", ERROR, 0, 0, "/var/log/myrpc.log");
                 }
 
-                // Удаление временных файлов
-                remove(stdout_file);
-                remove(stderr_file);
+                remove(out_tmp);
+                remove(err_tmp);
 
             } else {
-                snprintf(response, BUFFER_SIZE, "1: User '%s' is not allowed", username);
-                mysyslog("User not allowed", WARN, 0, 0, "/var/log/myrpc.log");
+                snprintf(reply, MAX_BUF_LEN, "1: User '%s' is not permitted", user_name);
+                mysyslog("User not permitted", WARN, 0, 0, "/var/log/myrpc.log");
             }
 
-            // Отправка ответа клиенту
-            sendto(sockfd, response, strlen(response), 0, (struct sockaddr*)&cliaddr, len);
+            sendto(server_sock, reply, strlen(reply), 0,
+                   (struct sockaddr*)&address_client, addr_len);
         }
     }
 
-    // Завершение работы сервера
-    close(sockfd);
-    mysyslog("Server stopped", INFO, 0, 0, "/var/log/myrpc.log");
+    close(server_sock);
+    mysyslog("Server shutdown complete", INFO, 0, 0, "/var/log/myrpc.log");
     return 0;
 }
