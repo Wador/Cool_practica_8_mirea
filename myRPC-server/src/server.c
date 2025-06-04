@@ -7,7 +7,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#include "config_parser.h"
+#include "settings_reader.h"
 #include "libmysyslog.h"  // Логирование системы
 
 #define MAX_BUF_LEN 1024  // Максимальный размер буфера для данных
