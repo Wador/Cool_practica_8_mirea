@@ -21,7 +21,7 @@ void signal_handler(int signal_code) {
 
 // Проверяка наличия пользователя в списке разрешённых
 int is_user_permitted(const char *user) {
-    FILE *conf_file = fopen("/etc/myRPC/users.conf", "r");
+    FILE *conf_file = fopen("/etc/myRPC/config_files/users.conf", "r");
     if (!conf_file) {
         mysyslog("Cannot open users.conf", ERROR, 0, 0, "/var/log/myrpc.log");
         perror("Cannot open users.conf");
@@ -58,7 +58,7 @@ int main() {
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
 
-    Config srv_config = parse_config("/etc/myRPC/myRPC.conf");
+    Config srv_config = parse_config("/etc/myRPC/config_files/myRPC.conf");
     int srv_port = srv_config.port;
     int is_stream_socket = strcmp(srv_config.socket_type, "stream") == 0;
 
