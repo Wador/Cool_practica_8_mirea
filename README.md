@@ -30,21 +30,21 @@ sudo dpkg -i deb/libmysyslog_1.0-1_amd64.deb
 
 ## 3. Настройка сервера
 
-Создаём конфигурационный файл `/etc/myRPC/myRPC.conf` для настройки параметров сервера:
+Создаём конфигурационный файл `/etc/myRPC/config_files/myRPC.conf` для настройки параметров сервера:
 
 ```bash
 sudo mkdir -p /etc/myRPC
-echo -e "port=5555\nsocket_type=stream" | sudo tee /etc/myRPC/myRPC.conf
+echo -e "port=5555\nsocket_type=stream" | sudo tee /etc/myRPC/config_files/myRPC.conf
 ```
 
 ---
 
 ## 4. Создание файла пользователей
 
-Создаём файл пользователей `/etc/myRPC/users.conf`, в котором указаны разрешённые пользователи:
+Создаём файл пользователей `/etc/myRPC/config_files/users.conf`, в котором указаны разрешённые пользователи:
 
 ```bash
-echo "vboxuser" | sudo tee /etc/myRPC/users.conf
+echo "vboxuser" | sudo tee /etc/myRPC/config_files/users.conf
 ```
 
 ---
