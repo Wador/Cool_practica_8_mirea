@@ -4,7 +4,7 @@
 #include <time.h>
 #include "libmysyslog.h"
 
-int log_message(const char* msg_content, int severity_level, int component_id, int output_style, const char* log_filepath) {
+int mysyslog(const char* msg_content, int severity_level, int component_id, int output_style, const char* log_filepath) {
     FILE *log_stream = fopen(log_filepath, "a");
     if (log_stream == NULL) {
         return -1;
