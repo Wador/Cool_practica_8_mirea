@@ -33,7 +33,7 @@ sudo dpkg -i deb/libmysyslog_1.0-1_amd64.deb
 Создаём конфигурационный файл `/etc/myRPC/config_files/myRPC.conf` для настройки параметров сервера:
 
 ```bash
-sudo mkdir -p /etc/myRPC
+sudo mkdir -p /etc/myRPC/config_files
 echo -e "port=5555\nsocket_type=stream" | sudo tee /etc/myRPC/config_files/myRPC.conf
 ```
 
